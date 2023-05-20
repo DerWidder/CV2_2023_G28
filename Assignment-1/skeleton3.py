@@ -32,17 +32,34 @@ def load_data(i0_path, i1_path, gt_path):
 	i0 = Image.open(i0_path)
 	i1 = Image.open(i1_path)
 	gt = Image.open(gt_path)
-	i_0 = np.asarray(i0, dtype=np.float64)  # convert image into np.array
-	i_0 = i_0 / np.max(i_0)  # regularization
-	# for i in range(3):
-	# 	i_0[:, :, i] = i_0[:, :, i] / np.max(i_0[:, :, i])  # regularization for each color-layer?
+	i_0 = np.asarray(i0, dtype=np.float64)  # convert image values into 64-bit floating np.array
+	i_0 = i_0 / 255  # regularization from [0,255] to [0,1]
 
 	i_1 = np.asarray(i1, dtype=np.float64)
-	i_1 = i_1 / np.max(i_1)
+	# print(np.max(i_1))
+	# print(print(np.max(i_1[:,:,2])))
+	i_1 = i_1 / 255  # regularization from [0,255] to [0,1]
 	g_t = np.asarray(gt, dtype=np.float64)
+
+	# check if the disparity is (floating point) integer in the range [0,16]
+	H, W = np.shape(g_t)
+	for i in range(H):
+		for j in range(W):
+			if g_t[i,j] < 0:
+				g_t[i,j]=0
+				print('find a value below 0')
+			elif g_t[i,j] > 16:
+				g_t[i, j] = 16
+				print('find a value beyond 16')
+			elif (g_t[i,j] % 1) != 0:
+				g_t[i,j] = g_t[i,j] // 1
+				print('find a non-integer value')
+
 
 	# print(i_0[:, :, 0])
 	# print(g_t)
+	# print(np.max((g_t)))
+	# print(np.min((g_t)))
 
 	return i_0, i_1, g_t
 
@@ -142,8 +159,9 @@ def make_noise(img, p):
 	# print(np.shape(img_flatten))
 	noise = np.random.normal(0.32, 0.78, size=len(img_flatten))  # create noise which is normal distributed
 	# should 2-d normal distributed noise be created?
-	noise_pixels = np.random.choice(img_flatten, size=int(p*H*W/100), replace=False)  # randomly pick p% pixels, no repetition
-	for i in range(len(noise_pixels)):
+	noise_pixels = np.random.choice(range(len(img_flatten)), size=int(p*H*W/100), replace=False)  # randomly pick p% pixels, no repetition
+	# replace the random chosen pixel to the noise
+	for i in noise_pixels:
 		img_flatten[i] = noise[i]
 
 	img_noise = np.reshape(img_flatten, (H, W))  # reshape the array to be (H, W)
