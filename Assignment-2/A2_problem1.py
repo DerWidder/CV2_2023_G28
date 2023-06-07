@@ -32,7 +32,7 @@ def random_disparity(disparity_size):
 
     """
 
-    disparity_map = np.random.randint(19, size=disparity_size)  # random numbers in [0, 12]
+    disparity_map = np.random.randint(13, size=disparity_size)  # random numbers in [0, 12]
 
     return disparity_map
 
@@ -67,7 +67,15 @@ def log_gaussian(x, mu, sigma):
 
     """
 
-    result = - (x - mu) ** 2 / (2 * sigma ** 2)
+    H, W = np.shape(x)
+    result = np.zeros_like(x, dtype=np.float64)  # set float 64 datatype
+
+    for i in range(H):
+        for j in range(W - 1):
+            result[i, j] = - (x[i, j + 1] - x[i, j] - mu) ** 2 / (2 * sigma ** 2)
+    for i in range(H - 1):
+        for j in range(W):
+            result[i, j] += - (x[i + 1, j] - x[i, j] - mu) ** 2 / (2 * sigma ** 2)  # there must add the value
 
     return result
 
@@ -84,19 +92,7 @@ def mrf_log_prior(x, mu, sigma):
         logp: float
 
     """
-
-    H, W = np.shape(x)
-    logp_V = 0
-    logp_H = 0
-    for i in range(H - 1):
-        for j in range(W):
-            logp_V = logp_V + log_gaussian(x[i + 1, j] - x[i, j], mu, sigma)
-
-    for i in range(H):
-        for j in range(W - 1):
-            logp_H = logp_H + log_gaussian(x[i, j + 1] - x[i, j], mu, sigma)
-
-    logp = logp_V + logp_H
+    logp = np.sum(log_gaussian(x, mu, sigma))
 
     return logp
 
@@ -114,12 +110,12 @@ def main():
     # Display log prior of random disparity ma
     random_disp = random_disparity(gt.shape)
     logp = mrf_log_prior(random_disp, mu=0, sigma=1.1)
-    print("Log-Prior of noise disparity map:", logp)
+    print("Log-prior of noisy disparity map:", logp)
 
     # Display log prior of constant disparity map
     constant_disp = constant_disparity(gt.shape, 6)
     logp = mrf_log_prior(constant_disp, mu=0, sigma=1.1)
-    print("Log-Prior of constant disparity map:", logp)
+    print("Log-prior of constant disparity map:", logp)
 
 
 if __name__ == "__main__":
