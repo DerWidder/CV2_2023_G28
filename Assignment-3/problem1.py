@@ -107,8 +107,8 @@ def alpha_expansion(noisy, init, edges, candidate_pixel_values, s, lmbda):
         #             denoised[H, W] == noisy[H, W]
         #         else:
         #             denoised[H, W] == i * np.ones_like(noisy)[H, W]
-        denoised[graph_mask == 1] = noisy[graph_mask == 1]  # update the value of denoised
-        denoised[graph_mask == 0] = i * np.ones_like(noisy)[graph_mask == 0]
+        denoised[graph_mask == 0] = noisy[graph_mask == 0]  # update the value of denoised
+        denoised[graph_mask == 1] = i * np.ones_like(noisy)[graph_mask == 1]
         print('currently used candidate value: ', i)
 
 
