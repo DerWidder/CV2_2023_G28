@@ -186,22 +186,26 @@ def energy_hs(im1, im2, flow, lambda_hs):
     Returns:
         energy: torch tensor scalar
     """
-    # reference: https://pytorch.org/docs/stable/generated/torch.autograd.grad.html
+    # reference: https://pytorch.org/docs/stable/generated/torch.nn.functional.conv2d.html
 
-    # calculate the square of the difference(the quadratic penalties)
+    # calculate the quadratic penalty for brightness changes
     im2_warp = warp_image(im2, flow_gt)  # warp the second image by using the gt
     diff = torch.abs(im1 - im2_warp)
     QP = torch.pow(diff, 2)
 
     # calculate the pairwise MRF prior
-    flow_grad_x = torch.autograd.grad(im1, flow, grad_outputs=torch.ones_like(im1),
-                                      create_graph=True, retain_graph=True)[0][:, 0]  # compute flow_grad_x
-    flow_grad_y = torch.autograd.grad(im1, flow, grad_outputs=torch.ones_like(im1),
-                                      create_graph=True, retain_graph=True)[0][:, 1]  # compute flow_grad_y
-    MRF = torch.pow(flow_grad_x, 2) + torch.pow(flow_grad_y, 2)
+    flow_grad_x = flow[:,0,:,:]
+    flow_grad_y = flow[:,1,:,:]
+    flow_grad_x.requires_grad_()
+    flow_grad_y.requires_grad_()
+    filter_x = torch.tensor([[[[0, 0, 0], [-1, 1, 0], [0, 0, 0]]]], dtype=torch.float32)
+    filter_y = torch.tensor([[[[0, -1, 0], [0, 1, 0], [0, 0, 0]]]], dtype=torch.float32)
+    flow_gradient_x = torch.nn.functional.conv2d(flow_grad_x.unsqueeze(1), filter_x)
+    flow_gradient_y = torch.nn.functional.conv2d(flow_grad_y.unsqueeze(1), filter_y)
+    smoothness_term = torch.sum(torch.pow(flow_gradient_x, 2) + torch.pow(flow_gradient_y, 2))
 
-    # calculate the sum of energy
-    energy = torch.sum(QP) + lambda_hs * torch.sum(MRF)
+    # Compute the energy function
+    energy = torch.sum(QP + lambda_hs * smoothness_term)
 
     return energy
 
