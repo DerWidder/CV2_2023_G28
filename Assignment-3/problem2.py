@@ -124,13 +124,13 @@ def visualize_warping_practice(im1, im2, flow_gt):
 
     # display the im1, im2_warp, diff in subplots
     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-    axs[0].imshow(im1_np, cmap='gray')
+    axs[0].imshow(im1_np[:, :, 0], cmap='gray')
     axs[0].set_title('im1')
 
-    axs[1].imshow(im2_warp_np, cmap='gray')
+    axs[1].imshow(im2_warp_np[:, :, 0], cmap='gray')
     axs[1].set_title('im2_warp')
 
-    axs[2].imshow(diff_np, cmap='gray')
+    axs[2].imshow(diff_np[:, :, 0], cmap='gray')
     axs[2].set_title('difference')
 
     for ax in axs:
@@ -198,8 +198,6 @@ def energy_hs(im1, im2, flow, lambda_hs):
     # calculate the pairwise MRF prior
     flow_grad_x = flow[:, 0, :, :]
     flow_grad_y = flow[:, 1, :, :]
-    flow_grad_x.requires_grad_()
-    flow_grad_y.requires_grad_()
     filter_x = torch.tensor([[[[0, 0, 0], [-1, 1, 0], [0, 0, 0]]]], dtype=torch.float32)
     filter_y = torch.tensor([[[[0, -1, 0], [0, 1, 0], [0, 0, 0]]]], dtype=torch.float32)
     flow_gradient_x = torch.nn.functional.conv2d(flow_grad_x.unsqueeze(1), filter_x)
@@ -231,6 +229,9 @@ def estimate_flow(im1, im2, flow_gt, lambda_hs, learning_rate, num_iter):
     """
     flow_estimate = torch.zeros_like(flow_gt)
     flow_estimate.requires_grad_(True)
+    print('start AEPE evaluation before optimization......')
+    aepe_before = evaluate_flow(flow_estimate, flow_gt)
+    print('AEPE before optimization:', aepe_before)
     print('start flow estimation......')
     for i in range(num_iter):
         # calculate the energy using flow_estimate from last iteration
@@ -245,9 +246,23 @@ def estimate_flow(im1, im2, flow_gt, lambda_hs, learning_rate, num_iter):
             flow_estimate -= learning_rate * gradients[0]
 
     print('the minimum energy is:', energy)
-    print('start AEPE evaluation......')
+    print('start AEPE evaluation after optimization......')
     aepe = evaluate_flow(flow_estimate, flow_gt)
-    print('AEPE:', aepe)
+    print('AEPE after optimization:', aepe)
+
+    # convert the tensor back to ndarray
+    flow_estimate.requires_grad_(False)
+    flow_estimate = np.squeeze(flow_estimate, axis=0)
+    flow_estimate_np = torch2numpy(flow_estimate)
+
+    # visualization of estimated flow
+    flow_rgb = flow2rgb(flow_estimate_np, max_value=None)
+    fig, ax = plt.subplots()
+    ax.imshow(flow_rgb)
+    ax.set_title('Estimated flow after optimization')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.show()
 
     return aepe
 
