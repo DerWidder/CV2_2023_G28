@@ -106,33 +106,6 @@ def alpha_expansion(noisy, init, edges, candidate_pixel_values, s, lmbda):
         # psnr_after = compute_psnr(denoised, gt)
         print('currently used candidate value: ', i)
 
-    # for i in candidate_pixel_values:  # iterate value from 0 to 254
-    #     unary_r1 = mrf_denoising_nllh(denoised, noisy, s).reshape(1, H * W)  # create first row of unary
-    #     unary_r2 = mrf_denoising_nllh(denoised, i * np.ones_like(noisy), s).reshape(1, H * W)  # create second row of unary
-    #     unary = np.concatenate((unary_r1, unary_r2), axis=0)  # create (2, N) unary array
-    #
-    #
-    #     denoised_pixel_value = denoised.flatten()  # flatten the noisy array
-    #     for j in range(edges.shape[0]):  # update the array pairwise
-    #         index_x, index_y = edges[j]
-    #         if denoised_pixel_value[index_x] != denoised_pixel_value[index_y]:  # Potts model, if the value of two nodes of an edge are not same
-    #             pairwise[index_x, index_y] = lmbda
-    #
-    #     graph_labels = gco.graphcut(unary, csr_matrix(pairwise))  # get labels form graphcut
-    #     graph_mask = graph_labels.reshape(H, W)
-    #     denoised[graph_mask == 0] = noisy[graph_mask == 0]  # update the value of denoised
-    #     denoised[graph_mask == 1] = i * np.ones_like(noisy)[graph_mask == 1]
-    #     psnr_after = compute_psnr(denoised, gt)
-    #
-    #     print('currently used candidate value: ', i)
-    #
-    #     if psnr_after > psnr_before:
-    #         print('higher psnr result is obtained')
-    #         print(psnr_before, psnr_after)
-    #         show_images(noisy, denoised)
-    #         break
-
-
     assert (np.equal(denoised.shape, init.shape).all())
     assert (denoised.dtype == init.dtype)
     return denoised
@@ -197,11 +170,3 @@ if __name__ == '__main__':
         iter += 1
         estimated = alpha_expansion(noisy, estimated, edges, labels, s, lmbda)
         psnr_after = compute_psnr(estimated, gt)
-
-    # while psnr_after <= psnr_before:  # while loop tp get results until the psnr of denosied image is better.
-    #     show_images(noisy, estimated)
-    #     print(psnr_before, psnr_after)
-    #     print(f'results of {iter}-th iteration')
-    #     iter += 1
-    #     estimated = alpha_expansion(noisy, estimated, edges, labels, s, lmbda)
-    #     psnr_after = compute_psnr(estimated, gt)
