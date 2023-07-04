@@ -340,8 +340,14 @@ def show_inference_examples(loader, model, grid_height, grid_width, title):
         # convert the prediction into numpy arrays
         np_prediction = torch2numpy(prediction[0])
 
+        # get the colored image both from label and from prediction
+        np_colored_image_label = voc_label2color(np_image, np_label[:, :, 0])
+        np_colored_image_label = np.clip(np_colored_image_label, 0, 1)
+        np_colored_image_prediction = voc_label2color(np_image, np_prediction[:, :, 0])
+        np_colored_image_prediction = np.clip(np_colored_image_prediction, 0, 1)
+
         # combined the labels with the prediction results
-        prediction_with_label = np.hstack((np_label, np_prediction))
+        prediction_with_label = np.hstack((np_colored_image_label, np_colored_image_prediction))
 
         # computes the percentage of correctly labeled pixels
         avg_prec = average_precision(prediction, values['gt'])
@@ -399,7 +405,16 @@ def find_unique_example(loader, unique_foreground_label):
         sample: a dictionary with keys 'im' and 'gt' specifying
                 the image sample 
     """
+    # ref: https://numpy.org/doc/stable/reference/generated/numpy.unique.html
+
     example = []
+    for num, values in enumerate(loader):
+        np_label = torch2numpy(values['gt'][0])
+        label_unique = np.unique(np_label[:,:,0])
+        # Pick out examples that only contain label of 0 and the unique_foreground_label (also include the ambiguous label)
+        if (len(label_unique) == 3) and (0 in label_unique) and (255 in label_unique) and (unique_foreground_label in label_unique):
+            example = values
+            break
 
     assert (isinstance(example, dict))
     return example
@@ -412,6 +427,36 @@ def show_unique_example(example_dict, model):
         example_dict: a dict with keys 'gt' and 'im' returned by an instance of VOC2007Dataset
         model: network (nn.Module)
     """
+    # similar to problem 1
+
+    # initialization of figure, axes and title
+    fig, axs = plt.subplots(1, 1)
+    fig.suptitle('unique examples (before fooling)')
+
+    np_image = torch2numpy(example_dict['im'][0]) / 255.0
+    np_label = torch2numpy(example_dict['gt'][0])
+    normalized_image = normalize_input(torch.unsqueeze(numpy2torch(np_image), 0))  # unsqueeze is used for dimension expansion
+    prediction, acts = run_forward_pass(normalized_image, model)
+    # convert the prediction into numpy arrays
+    np_prediction = torch2numpy(prediction[0])
+
+    # get the colored image both from label and from prediction
+    np_colored_image_label = voc_label2color(np_image, np_label[:, :, 0])
+    np_colored_image_label = np.clip(np_colored_image_label, 0, 1)
+    np_colored_image_prediction = voc_label2color(np_image, np_prediction[:, :, 0])
+    np_colored_image_prediction = np.clip(np_colored_image_prediction, 0, 1)
+
+    # combined the labels with the prediction results
+    prediction_with_label = np.hstack((np_colored_image_label, np_colored_image_prediction))
+
+    # computes the percentage of correctly labeled pixels
+    avg_prec = average_precision(prediction, example_dict['gt'])
+
+    # show the figure
+    axs.set_title("avg_prec = {}".format(avg_prec))  # put the performance metric into the title
+    axs.imshow(prediction_with_label)
+    axs.axis('off')
+    plt.show()
     pass
 
 
