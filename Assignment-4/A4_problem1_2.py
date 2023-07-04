@@ -26,6 +26,7 @@ from utils import torch2numpy
 from utils import numpy2torch
 
 from torchvision import models
+from torchvision import transforms
 
 
 class VOC2007Dataset(Dataset):
@@ -192,18 +193,17 @@ def voc_label2color(np_image, np_label):
     ycbcr_image_color[:, :, 0] = np.sum(color_values[:, 0][:, None, None] * label_masks, axis=0)  # Cb
     ycbcr_image_color[:, :, 1] = np.sum(color_values[:, 1][:, None, None] * label_masks, axis=0)  # Cr
 
-    # find the ambiguous label
-    label_ambiguous_masks = np_label == 255
     # set the ambiguous color to (224, 224, 192)
-    color = skimage.color.rgb2ycbcr(np.array((224, 224, 192)) / 255)[1:3]
-    ycbcr_image_color[:, :, 0][label_ambiguous_masks] = color[0]
-    ycbcr_image_color[:, :, 1][label_ambiguous_masks] = color[1]
+    color_ambiguous = skimage.color.rgb2ycbcr(np.array([[[224, 224, 192]]]) / 255)
+    # find the ambiguous label
+    ycbcr_image_color[:, :, 0][np_label > 20] = color_ambiguous[0, 0, 1]
+    ycbcr_image_color[:, :, 1][np_label > 20] = color_ambiguous[0, 0, 2]
 
     # recombined the texture from given image with the color from labels
     ycbcr_image_recombined = np.dstack((ycbcr_image_luma, ycbcr_image_color))
 
     # convert the color-space from YCbCr back to RGB
-    colored = skimage.color.ycbcr2rgb(ycbcr_image_recombined)
+    colored = np.array(skimage.color.ycbcr2rgb(ycbcr_image_recombined), dtype=np.float32)
 
     assert (np.equal(colored.shape, np_image.shape).all())
     assert (np_image.dtype == colored.dtype)
@@ -227,7 +227,7 @@ def show_dataset_examples(loader, grid_height, grid_width, title):
     fig, axs = plt.subplots(grid_height, grid_width)
     fig.suptitle(title)
 
-    # load the image form loader
+    # load the image from loader
     image_num = grid_width * grid_height  # the number of images to be shown
     for num, values in enumerate(loader):
         if num >= image_num:
@@ -260,10 +260,13 @@ def normalize_input(input_tensor):
     Returns:
         normalized: torch tensor (B,3,H,W) (float32)
     """
-    # ref: ChatGPT
+    # ref: https://pytorch.org/vision/main/generated/torchvision.transforms.Normalize.html
+    # ref: https://zhuanlan.zhihu.com/p/414242338
+
     mean = torch.tensor(VOC_STATISTICS['mean']).reshape(1, 3, 1, 1)
     std = torch.tensor(VOC_STATISTICS['std']).reshape(1, 3, 1, 1)
-    normalized = (input_tensor - mean) / std
+    # normalization using transform package from torchvision
+    normalized = transforms.Normalize(mean, std)(input_tensor)
 
     assert (type(input_tensor) == type(normalized))
     assert (input_tensor.size() == normalized.size())
@@ -282,16 +285,22 @@ def run_forward_pass(normalized, model):
         prediction: class prediction of the model (B,1,H,W) (int64)
         acts: activations of the model (B,21,H,W) (float 32)
     """
-    # ref: ChatGPT
+    # ref: https://stackoverflow.com/questions/60018578/what-does-model-eval-do-in-pytorch
+    # ref: https://www.geeksforgeeks.org/what-is-with-torch-no_grad-in-pytorch/
+
     # Put the model into evaluation mode
     model.eval()
 
-    # Forward pass to get the model's output activations
+    # disable the calculation of the gradient with torch.no_grad() to speed up the operation
     with torch.no_grad():
-        acts = model(normalized)
+        # forward pass to get the model's output activations
+        acts = model(normalized)['out']     # only consider the 'out', not the 'aux'
 
+    # Obtain the model's confidence or probability estimate for each class
+    probabilities = torch.softmax(acts, dim=1)
     # Get the final prediction labels
-    _, prediction = torch.max(acts, dim=1)
+    _, prediction = torch.max(probabilities, dim=1)
+    prediction = torch.unsqueeze(prediction, 0)
 
     assert (isinstance(prediction, torch.Tensor))
     assert (isinstance(acts, torch.Tensor))
@@ -309,36 +318,43 @@ def show_inference_examples(loader, model, grid_height, grid_width, title):
         grid_width: int
         title: string
     """
-    '''
-        另外一组的代码 要做修改
-        '''
-    fig, axs = plt.subplots(grid_height, grid_width, figsize=(18, 18))
+    # ref: https: // pytorch.org / docs / stable / generated / torch.unsqueeze.html
+
+    # initialization of figure, axes and title
+    fig, axs = plt.subplots(grid_height, grid_width)
     fig.suptitle(title)
 
-    for num, val in enumerate(loader):
-        image = val['im'][0]
-        gt = val['gt'][0]
-
-        # Convert tensors to NumPy arrays
-        image = normalize_input(torch.unsqueeze(numpy2torch(np.clip(torch2numpy(image), 0, 1)), dim=0))
-        label_np = torch2numpy(gt)
-        prediction, acts = run_forward_pass(image, model)
-
-        avg_prec = average_precision(prediction, val['gt'])
-        prediction = torch2numpy(prediction[0])
-
-        new_array = np.concatenate((label_np, prediction), axis=1)
-
-        row = num // grid_width
-        col = num % grid_width
-        axs[row, col].set_title(f"avg_prec ={avg_prec} ")
-        axs[row, col].imshow(new_array)
-        axs[row, col].axis('off')
-
-        if num + 1 == grid_height * grid_width:
+    # load the image from loader
+    image_num = grid_width * grid_height  # the number of images to be shown
+    for num, values in enumerate(loader):
+        if num >= image_num:
             break
+        # get the colored image and label and convert it into numpy arrays
+        np_image = torch2numpy(values['im'][0]) / 255.0
+        np_label = torch2numpy(values['gt'][0])
+        # Limit the value of the image to the range (0, 1) to avoid errors
+        np_image = np.clip(np_image, 0, 1)
+        # get the normalized image using the function we defined before
+        normalized_image = normalize_input(torch.unsqueeze(numpy2torch(np_image), 0))  # unsqueeze is used for dimension expansion
+        prediction, acts = run_forward_pass(normalized_image, model)
+        # convert the prediction into numpy arrays
+        np_prediction = torch2numpy(prediction[0])
 
-    plt.tight_layout()
+        # combined the labels with the prediction results
+        prediction_with_label = np.hstack((np_label, np_prediction))
+
+        # computes the percentage of correctly labeled pixels
+        avg_prec = average_precision(prediction, values['gt'])
+
+        # get row and colum from the quotient and remainder
+        row, column = divmod(num, grid_width)
+        ax = axs[row, column]
+        # show the figure
+        ax.set_title("avg_prec = {}".format(avg_prec))  # put the performance metric into the title
+        ax.imshow(prediction_with_label)
+        ax.axis('off')
+
+    # plt.tight_layout()
     plt.show()
     pass
 
@@ -354,20 +370,20 @@ def average_precision(prediction, gt):
     Returns:
         avg_prec: torch scalar (float32)
     """
-    # Flatten the prediction and ground truth tensors
-    prediction_flat = prediction.flatten()
-    gt_flat = gt.flatten()
+    # ref: https://stackoverflow.com/questions/50792316/what-does-1-mean-in-pytorch-view
 
-    # Calculate the number of correctly labeled pixels
-    correct_pixels = np.sum(prediction_flat == gt_flat)
+    # flatten the prediction and ground truth tensors
+    prediction_flat = prediction.view(-1)
+    gt_flat = gt.view(-1)
 
+    # compute the number of correctly labeled pixels
+    num_correct = torch.sum(prediction_flat == gt_flat)
     # Calculate the total number of pixels
-    total_pixels = prediction_flat.size
-
+    num_correct_total = prediction_flat.size(0)
     # Compute the average precision
-    avg_precision = correct_pixels / total_pixels
+    avg_prec = num_correct.float() / num_correct_total
 
-    return avg_precision
+    return avg_prec
 
 
 ### FUNCTIONS FOR PROBLEM 2 ###
