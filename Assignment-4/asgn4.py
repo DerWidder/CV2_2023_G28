@@ -308,10 +308,16 @@ def run_forward_pass(normalized, model):
 
     # Forward pass to get the model's output activations
     with torch.no_grad():
-        acts = model(normalized)
+        # acts = model(normalized)
+        # forward pass to get the model's output activations
+        acts = model(normalized)['out']  # only consider the 'out', not the 'aux'
 
+    # Obtain the model's confidence or probability estimate for each class
+    probabilities = torch.softmax(acts, dim=1)
     # Get the final prediction labels
-    _, prediction = torch.max(acts, dim=1)
+    # _, prediction = torch.max(acts, dim=1)
+    _, prediction = torch.max(probabilities, dim=1)
+    prediction = torch.unsqueeze(prediction, 0)
 
     assert (isinstance(prediction, torch.Tensor))
     assert (isinstance(acts, torch.Tensor))
@@ -335,27 +341,47 @@ def show_inference_examples(loader, model, grid_height, grid_width, title):
     fig.suptitle(title)
 
     for num, val in enumerate(loader):
+        if num >= grid_height * grid_width:
+            break
+
         image = val['im'][0]
         gt = val['gt'][0]
 
         # Convert tensors to NumPy arrays
-        image = normalize_input(torch.unsqueeze(numpy2torch(np.clip(torch2numpy(image), 0, 1)), dim=0))
-        label_np = torch2numpy(gt)
-        prediction, acts = run_forward_pass(image, model)
+        np_image = torch2numpy(image) / 255.0
+        np_label = torch2numpy(gt)
+        np_image = np.clip(np_image, 0, 1)
+        normalized_image = normalize_input(torch.unsqueeze(numpy2torch(np_image), 0)) # unsqueeze is used for dimension expansion
+        # label_np = torch2numpy(gt)
+        prediction, acts = run_forward_pass(normalized_image, model)
 
+        np_prediction = torch2numpy(prediction[0])
+        # get the colored image both from label and from prediction
+        np_colored_image_label = voc_label2color(np_image, np_label[:, :, 0])
+        np_colored_image_label = np.clip(np_colored_image_label, 0, 1)
+        np_colored_image_prediction = voc_label2color(np_image, np_prediction[:, :, 0])
+        np_colored_image_prediction = np.clip(np_colored_image_prediction, 0, 1)
+
+        # combined the labels with the prediction results
+        prediction_with_label = np.hstack((np_colored_image_label, np_colored_image_prediction))
+        # prediction_with_label = np.hstack((np_label, np_prediction))[:, :, 0]
+        # print('shape of prediction_with_label: ', prediction_with_label.shape)
+        # computes the percentage of correctly labeled pixels
         avg_prec = average_precision(prediction, val['gt'])
-        prediction = torch2numpy(prediction[0])
-
-        new_array = np.concatenate((label_np, prediction), axis=1)
 
         row = num // grid_width
         col = num % grid_width
-        axs[row, col].set_title(f"avg_prec ={avg_prec} ")
-        axs[row, col].imshow(new_array)
+        # axs[row, col].set_title(f"avg_prec ={avg_prec} ")
+        axs[row, col].set_title("avg_prec = {}".format(avg_prec))  # put the performance metric into the title
+        axs[row, col].imshow(prediction_with_label)
         axs[row, col].axis('off')
-
-        if num + 1 == grid_height * grid_width:
-            break
+        # get row and colum from the quotient and remainder
+        # row, column = divmod(num, grid_width)  # divmod 返回一个包含商和余数的元组
+        # ax = axs[row, column]
+        # # show the figure
+        # ax.set_title("avg_prec = {}".format(avg_prec))  # put the performance metric into the title
+        # ax.imshow(prediction_with_label)
+        # ax.axis('off')
 
     plt.tight_layout()
     plt.show()
@@ -373,19 +399,29 @@ def average_precision(prediction, gt):
         avg_prec: torch scalar (float32)
     """
     # Flatten the prediction and ground truth tensors
-    prediction_flat = prediction.flatten()
-    gt_flat = gt.flatten()
+    # prediction_flat = prediction.flatten()
+    # gt_flat = gt.flatten()
+    prediction_flat = prediction.view(-1)
+    gt_flat = gt.view(-1)
 
-    # Calculate the number of correctly labeled pixels
-    correct_pixels = np.sum(prediction_flat == gt_flat)
-
+    # compute the number of correctly labeled pixels
+    num_correct = torch.sum(prediction_flat == gt_flat)
     # Calculate the total number of pixels
-    total_pixels = prediction_flat.size
+    num_correct_total = prediction_flat.size(0)
+    # Compute the average precision
+    avg_prec = num_correct.float() / num_correct_total
+
+    return avg_prec
+    # # Calculate the number of correctly labeled pixels
+    # # correct_pixels = np.sum(prediction_flat == gt_flat)
+    #
+    # # Calculate the total number of pixels
+    # total_pixels = prediction_flat.size
 
     # Compute the average precision
-    avg_precision = correct_pixels / total_pixels
+    # avg_precision = correct_pixels / total_pixels
 
-    return avg_precision
+    # return avg_precision
 
 
 ### FUNCTIONS FOR PROBLEM 2 ###
@@ -401,7 +437,19 @@ def find_unique_example(loader, unique_foreground_label):
         sample: a dictionary with keys 'im' and 'gt' specifying
                 the image sample 
     """
-    example = []
+    # set the background value
+    background_label = 0
+    example = dict()
+    for num, val in enumerate(loader):
+        np_label = torch2numpy(val['gt'][0])
+        # get the foreground labels
+        foreground_label = set(np_label.flatten()) - {background_label}
+
+        if len(foreground_label) == 1 and unique_foreground_label in foreground_label:
+            example['im'] = val['im']
+            example['gt'] = val['gt']
+            # example = val
+            break
 
     assert (isinstance(example, dict))
     return example
@@ -414,6 +462,42 @@ def show_unique_example(example_dict, model):
         example_dict: a dict with keys 'gt' and 'im' returned by an instance of VOC2007Dataset
         model: network (nn.Module)
     """
+    fig, axs = plt.subplots(1, 1)
+
+    image = example_dict['im'][0]
+    gt = example_dict['gt'][0]
+
+    # Convert tensors to NumPy arrays
+    np_image = torch2numpy(image) / 255.0
+    np_label = torch2numpy(gt)
+    np_image = np.clip(np_image, 0, 1)
+    normalized_image = normalize_input(torch.unsqueeze(numpy2torch(np_image), 0))  # unsqueeze is used for dimension expansion
+    # label_np = torch2numpy(gt)
+    prediction, acts = run_forward_pass(normalized_image, model)
+
+    np_prediction = torch2numpy(prediction[0])
+    # get the colored image both from label and from prediction
+    np_colored_image_label = voc_label2color(np_image, np_label[:, :, 0])
+    np_colored_image_label = np.clip(np_colored_image_label, 0, 1)
+    np_colored_image_prediction = voc_label2color(np_image, np_prediction[:, :, 0])
+    np_colored_image_prediction = np.clip(np_colored_image_prediction, 0, 1)
+
+    # combined the labels with the prediction results
+    prediction_with_label = np.hstack((np_colored_image_label, np_colored_image_prediction))
+    # prediction_with_label = np.hstack((np_label, np_prediction))[:, :, 0]
+    # print('shape of prediction_with_label: ', prediction_with_label.shape)
+    # computes the percentage of correctly labeled pixels
+    avg_prec = average_precision(prediction, example_dict['gt'])
+
+
+    # axs[row, col].set_title(f"avg_prec ={avg_prec} ")
+    axs[1, 1].set_title("avg_prec = {}".format(avg_prec))  # put the performance metric into the title
+    axs[1, 1].imshow(prediction_with_label)
+    axs[1, 1].axis('off')
+
+
+    plt.tight_layout()
+    plt.show()
     pass
 
 
@@ -431,6 +515,54 @@ def show_attack(example_dict, model, src_label, target_label, learning_rate, ite
 
     This function does not return anything, but instead visualises the results (see Fig. 4).
     """
+    tensor_image = example_dict['im']
+    tensor_label = example_dict['gt']
+    np_image = torch2numpy(example_dict['im'][0]) / 255.0
+    np_label = torch2numpy(example_dict['gt'][0])
+
+    # convert all pixels with a src label to a target label
+    # fake_np_label = np.copy(np_label)
+    # fake_np_label[fake_np_label == src_label] = target_label
+    fake_tensor_label = tensor_label.copy()
+    fake_tensor_label[fake_tensor_label == src_label] == target_label
+
+    # enable the gradient tracking for an input image
+    tensor_image.requires_grad = True
+
+    # run the standard pipeline consisting of standardization and model forward pass
+    # normalized_tensor_image = normalize_input(tensor_image)
+    # prediction, acts = run_forward_pass(normalized_tensor_image, model)
+
+    # apply a cross entropy to compute the loss of the predictions w.r.t. the fake_tensor_label
+    # loss_cross_entropy = torch.nn.CrossEntropyLoss(prediction, fake_tensor_label)
+
+    # set pixels corresponding to background (in the original ground truth) to zero
+    changed_tensor_image = tensor_image.copy()
+    changed_tensor_image[tensor_label == 0] = 0
+
+    # define the optimizer
+    optimizer = optim.LBFGS(changed_tensor_image, lr=learning_rate)
+    def closure():
+        # reset the gradients
+        optimizer.zero_grad()
+
+        # forward pass
+        normalized_tensor_image = normalize_input(tensor_image)
+        prediction, acts = run_forward_pass(normalized_tensor_image, model)
+
+        # compute cross entropy
+        loss_cross_entropy = torch.nn.CrossEntropyLoss(prediction, fake_tensor_label)
+        loss_cross_entropy.backward()
+
+    # optimization loop
+    for _ in range(iterations):
+        optimizer.step(closure)
+
+    # Updated input image
+    updated_image = tensor_image.detach()
+
+    # visualize tensor_image, updated_image, difference and prediction
+
     pass
 
 
@@ -460,7 +592,7 @@ def main():
     model = models.segmentation.fcn_resnet101(pretrained=True, num_classes=21)
 
     # Apply fcn. Switch to training loader if you want more variety.
-    show_inference_examples(valid_loader, model, grid_height=2, grid_width=3, title='inference examples')
+    # show_inference_examples(valid_loader, model, grid_height=2, grid_width=3, title='inference examples')
 
     # attack1: convert cat to dog
     cat_example = find_unique_example(valid_loader, unique_foreground_label=8)
